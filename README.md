@@ -1,4 +1,4 @@
-# AIQ / Qualtrics Screenshot Automation
+# Screenshot Automation
 
 Automates the daily capture of Qualtrics dashboard screenshots for the
 internal AIQ application. Built with **Python + Playwright (Chromium)**.
