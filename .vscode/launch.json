@@ -1,0 +1,51 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Full run (General + Alex + Rachita + PDF)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}\\main.py",
+      "args": ["--clean"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Full run (no clean, no PDF)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}\\main.py",
+      "args": ["--no-pdf"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Only current admin (skip impersonation)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}\\main.py",
+      "args": ["--clean", "--user", "__none__"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Only Alex Belov",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}\\main.py",
+      "args": ["--clean", "--skip-current", "--user", "Alex Belov"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Only Rachita Sundar",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}\\main.py",
+      "args": ["--clean", "--skip-current", "--user", "Rachita Sundar"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.autoImportCompletions": true,
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "browser_profile": true,
+    ".venv": true
+  },
+  "search.exclude": {
+    "output": true,
+    "browser_profile": true,
+    ".venv": true
+  },
+  "terminal.integrated.defaultProfile.windows": "PowerShell"
+}
