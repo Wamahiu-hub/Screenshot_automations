@@ -130,6 +130,26 @@ DASHBOARD_CSS_FALLBACKS: dict[str, str] = {
     # "Spend Overview": '[data-dashboard-id="spend-overview"]',
 }
 
+# AIQ 4.1.6 Qualtrics category page (app-dashboard-list). Each card is an
+# <app-dashboard-card> whose visible name is [data-cy="dashboard-card-title"].
+# Click the card; do not page.goto() the /view/<id> URL (that renders blank).
+DASHBOARD_LIST_CSS: str = "app-dashboard-list"
+DASHBOARD_CARD_CSS: str = "app-dashboard-card"
+DASHBOARD_CARD_TITLE_CSS: str = "[data-cy='dashboard-card-title']"
+
+# Open dashboard (app-dashboard-view). The Go Back control returns to the
+# card grid. It is the angle-left button, not the home button beside it.
+DASHBOARD_VIEW_CSS: str = "app-dashboard-view"
+DASHBOARD_TITLE_CSS: str = "h2.dashboard-title"
+DASHBOARD_BACK_BUTTON_SELECTORS: list[str] = [
+    "button[ptooltip='Go Back']",
+    "app-dashboard-view button.back-button:has(i.pi-angle-left)",
+    "button.back-button:has(i.pi-angle-left)",
+]
+
+# Company / Personal / Shared with me tabs above the card grid.
+COMPANY_TAB_NAME: str = "Company"
+
 
 # ---------------------------------------------------------------------------
 # Dashboard "loaded" signal

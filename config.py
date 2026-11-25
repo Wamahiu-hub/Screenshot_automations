@@ -53,17 +53,20 @@ ORGANIZATION_NAME: str = os.environ.get("ORGANIZATION_NAME", "Qualtrics").strip(
 # ---------------------------------------------------------------------------
 
 # The logical (canonical) name is what we use in folder names and logs.
-# `ui_labels` lists the text values we should try to match in the DOM
-# (some deployments show "Trips Statistics" instead of "Trip Statistics").
-# `url` is the direct AIQ URL for the dashboard (preferred when known);
-# `ui_labels` are visible tile texts we fall back to clicking if `url` is None.
+# `ui_labels` lists the text on the Qualtrics category cards (AIQ 4.1.6
+# shows "Trips Statistics" on the card). `url` is the view we must land
+# on after clicking that card — dashboards are opened by clicking the
+# card, not by loading `url` directly, because a direct load renders a
+# blank page after the 4.1.6 release.
+#
+# Budget Tracking (view/1049) was removed from the Qualtrics category.
+# The five cards, in grid order, are the list below.
 DASHBOARDS: list[dict] = [
-    {"index": 1, "name": "Spend Overview",        "ui_labels": ["Spend Overview"],       "url": "https://aiq.cerebriai.com/categories/356/view/1971"},
-    {"index": 2, "name": "Expense Details",       "ui_labels": ["Expense Details"],      "url": "https://aiq.cerebriai.com/categories/356/view/1017"},
-    {"index": 3, "name": "Budget Tracking",       "ui_labels": ["Budget Tracking"],      "url": "https://aiq.cerebriai.com/categories/356/view/1049"},
-    {"index": 4, "name": "Travel Spend Details",  "ui_labels": ["Travel Spend Details"], "url": "https://aiq.cerebriai.com/categories/356/view/1257"},
-    {"index": 5, "name": "Spend Dept",            "ui_labels": ["Spend Dept"],           "url": "https://aiq.cerebriai.com/categories/356/view/2068"},
-    {"index": 6, "name": "Trip Statistics",       "ui_labels": ["Trip Statistics", "Trips Statistics"], "url": "https://aiq.cerebriai.com/categories/356/view/1896"},
+    {"index": 1, "name": "Spend Overview",       "ui_labels": ["Spend Overview"],                      "url": "https://aiq.cerebriai.com/categories/356/view/1971"},
+    {"index": 2, "name": "Expense Details",      "ui_labels": ["Expense Details"],                     "url": "https://aiq.cerebriai.com/categories/356/view/1017"},
+    {"index": 3, "name": "Travel Spend Details", "ui_labels": ["Travel Spend Details"],                "url": "https://aiq.cerebriai.com/categories/356/view/1257"},
+    {"index": 4, "name": "Spend Dept",           "ui_labels": ["Spend Dept"],                          "url": "https://aiq.cerebriai.com/categories/356/view/2068"},
+    {"index": 5, "name": "Trip Statistics",      "ui_labels": ["Trips Statistics", "Trip Statistics"], "url": "https://aiq.cerebriai.com/categories/356/view/1896"},
 ]
 
 

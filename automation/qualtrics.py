@@ -15,6 +15,7 @@ hard-code strings here.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Iterable
@@ -197,7 +198,12 @@ def _wait_for_login(page: Page, timeout_seconds: float) -> None:
 # ---------------------------------------------------------------------------
 
 def open_qualtrics(page: Page) -> None:
-    """Navigate to the Qualtrics section."""
+    """Navigate to the Qualtrics category card grid."""
+    if _on_card_grid(page):
+        log.info("Already on the Qualtrics dashboard card grid.")
+        _ensure_company_tab(page)
+        return
+
     if config.QUALTRICS_URL:
         log.info("Navigating directly to Qualtrics URL: %s", config.QUALTRICS_URL)
         page.goto(config.QUALTRICS_URL, wait_until="domcontentloaded")
@@ -205,33 +211,18 @@ def open_qualtrics(page: Page) -> None:
             page.wait_for_load_state("networkidle", timeout=15_000)
         except PWTimeoutError:
             pass
-        return
-
-    log.info("Looking for a Qualtrics nav entry by name...")
-    for name in sel.QUALTRICS_NAV_NAMES:
-        loc = _first_visible(
-            page.get_by_role("link", name=name, exact=False),
-            page.get_by_role("button", name=name, exact=False),
-            page.get_by_role("menuitem", name=name, exact=False),
-            page.get_by_role("tab", name=name, exact=False),
-        )
-        if loc is not None:
-            log.info("Clicking Qualtrics nav entry: %s", name)
-            loc.click()
-            try:
-                page.wait_for_load_state("networkidle", timeout=15_000)
-            except PWTimeoutError:
-                pass
+        time.sleep(1.0)
+        if _on_card_grid(page) and not _page_seems_blank(page):
+            _ensure_company_tab(page)
             return
+        log.warning(
+            "Direct Qualtrics URL did not show the dashboard cards (url=%s). "
+            "Opening the card grid from /dashboard instead.",
+            page.url,
+        )
 
-    raise AutomationError(
-        "Could not find a Qualtrics navigation entry.\n"
-        "Fix by either:\n"
-        "  1. Setting config.QUALTRICS_URL to the direct URL, OR\n"
-        "  2. Adding the visible label to selectors.QUALTRICS_NAV_NAMES.\n"
-        "In Chrome DevTools, right-click the Qualtrics menu item, choose\n"
-        "Inspect, and copy either its visible text or a unique CSS selector."
-    )
+    _open_card_grid_from_dashboard(page)
+    _ensure_company_tab(page)
 
 
 # ---------------------------------------------------------------------------
@@ -358,29 +349,265 @@ def ensure_organization_selected(page: Page, organization: str) -> None:
 # Dashboards
 # ---------------------------------------------------------------------------
 
-# AIQ views that return a broken lazy-loaded JS chunk (MIME "text/html") when
-# navigated to directly with page.goto(). These MUST be reached via in-SPA
-# navigation: load "/" first (which redirects to /categories/356 and renders
-# the dashboard tiles), then click the tile with matching text.
-#
-# Confirmed with automation/_probe_trip_stats.py: /view/1896 (Trip Statistics)
-# and /categories/356 both fail with:
-#   "Failed to load module script: Expected a JavaScript-or-Wasm module script
-#    but the server responded with a MIME type of 'text/html'."
-_DIRECT_NAV_BROKEN_URL_MARKERS: tuple[str, ...] = (
-    "/view/1896",  # Trip Statistics
-)
-
-# The AIQ Qualtrics category listing (which "/" redirects to) shows the tile
-# for view/1896 with the label "Trips Statistics" (plural). Include both
-# spellings for defensiveness.
-_TRIP_STATS_TILE_LABELS: tuple[str, ...] = ("Trips Statistics", "Trip Statistics")
+def _normalize_label(text: str) -> str:
+    return " ".join((text or "").split()).casefold()
 
 
-def _url_needs_spa_bootstrap(direct_url: str | None) -> bool:
-    if not direct_url:
+def _view_id_from_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    match = re.search(r"/view/(\d+)", url)
+    return match.group(1) if match else None
+
+
+def _card_titles_visible(page: Page) -> bool:
+    try:
+        return page.locator(sel.DASHBOARD_CARD_TITLE_CSS).first.is_visible(timeout=800)
+    except Exception:  # noqa: BLE001
         return False
-    return any(m in direct_url for m in _DIRECT_NAV_BROKEN_URL_MARKERS)
+
+
+def _on_card_grid(page: Page) -> bool:
+    """True when the Qualtrics category card grid is what's on screen."""
+    if "/view/" in (page.url or ""):
+        return False
+    return _card_titles_visible(page)
+
+
+def _inside_dashboard(page: Page) -> bool:
+    if "/view/" in (page.url or ""):
+        return True
+    try:
+        return page.locator(
+            f"{sel.DASHBOARD_VIEW_CSS} {sel.DASHBOARD_TITLE_CSS}"
+        ).first.is_visible(timeout=500)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _visible_card_titles(page: Page) -> list[str]:
+    titles: list[str] = []
+    loc = page.locator(sel.DASHBOARD_CARD_TITLE_CSS)
+    try:
+        count = loc.count()
+    except Exception:  # noqa: BLE001
+        return titles
+    for i in range(count):
+        try:
+            text = " ".join((loc.nth(i).inner_text(timeout=1_000) or "").split())
+        except Exception:  # noqa: BLE001
+            continue
+        if text:
+            titles.append(text)
+    return titles
+
+
+def _ensure_company_tab(page: Page) -> None:
+    """Select the Company tab on the category page when it isn't already."""
+    tab = page.get_by_role("tab", name=sel.COMPANY_TAB_NAME, exact=True).first
+    try:
+        tab.wait_for(state="visible", timeout=1_000)
+    except PWTimeoutError:
+        return
+    except Exception:  # noqa: BLE001
+        return
+    selected = (tab.get_attribute("aria-selected") or "").lower()
+    if selected == "true":
+        return
+    log.info("Selecting the '%s' tab on the dashboard card grid.", sel.COMPANY_TAB_NAME)
+    tab.click()
+    try:
+        page.locator(sel.DASHBOARD_CARD_TITLE_CSS).first.wait_for(
+            state="visible", timeout=10_000
+        )
+    except PWTimeoutError:
+        pass
+    time.sleep(0.4)
+
+
+def _find_back_button(page: Page):
+    for css in sel.DASHBOARD_BACK_BUTTON_SELECTORS:
+        loc = page.locator(css).first
+        try:
+            loc.wait_for(state="visible", timeout=2_000)
+            return loc
+        except PWTimeoutError:
+            continue
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _go_back_to_card_grid(page: Page) -> bool:
+    """Click the dashboard Go Back button (angle-left) to return to the cards."""
+    log.info("Clicking Go Back to return to the dashboard cards.")
+    button = _find_back_button(page)
+    if button is None and _inside_dashboard(page):
+        # After impersonation the dashboard chrome can finish painting a
+        # moment after the URL is already on /view/<id>.
+        log.info("Go Back is not visible yet; waiting for the dashboard chrome.")
+        page.wait_for_timeout(2_000)
+        button = _find_back_button(page)
+    if button is None:
+        log.info("Go Back button is not visible.")
+        return False
+
+    button.click(timeout=5_000)
+    try:
+        page.wait_for_function(
+            "() => !location.pathname.includes('/view/')",
+            timeout=15_000,
+        )
+    except PWTimeoutError:
+        log.warning("URL still contains /view/ after Go Back: %s", page.url)
+    try:
+        page.locator(sel.DASHBOARD_CARD_TITLE_CSS).first.wait_for(
+            state="visible", timeout=15_000
+        )
+    except PWTimeoutError:
+        return False
+    try:
+        page.wait_for_load_state("networkidle", timeout=8_000)
+    except PWTimeoutError:
+        pass
+    return _on_card_grid(page)
+
+
+def _open_card_grid_from_dashboard(page: Page) -> None:
+    """Land on /dashboard, then open the Qualtrics category with an in-app click.
+
+    Direct page.goto() of /categories/356/view/<id> (and sometimes of the
+    category URL itself) serves a lazy JS chunk as text/html after the
+    4.1.6 release, which leaves a blank page. Entering through /dashboard
+    and clicking keeps Angular on already-loaded modules.
+    """
+    log.info("Opening the Qualtrics card grid via /dashboard.")
+    page.goto("https://aiq.cerebriai.com/dashboard", wait_until="domcontentloaded")
+    try:
+        page.wait_for_load_state("networkidle", timeout=15_000)
+    except PWTimeoutError:
+        pass
+    time.sleep(1.5)
+
+    if _on_card_grid(page):
+        return
+
+    if not _click_card(page, "Qualtrics", "Qualtrics category card", timeout_ms=15_000):
+        link = page.locator("a[href='/categories/356']").first
+        try:
+            link.wait_for(state="visible", timeout=3_000)
+            link.click(timeout=5_000)
+            log.info("Opened Qualtrics via the sidebar link.")
+        except (PWTimeoutError, Exception):  # noqa: BLE001
+            raise AutomationError(
+                "Could not open the Qualtrics category from /dashboard "
+                f"(url={page.url})."
+            )
+
+    try:
+        page.wait_for_url("**/categories/356**", timeout=15_000)
+    except PWTimeoutError:
+        pass
+    try:
+        page.wait_for_load_state("networkidle", timeout=15_000)
+    except PWTimeoutError:
+        pass
+    try:
+        page.locator(sel.DASHBOARD_CARD_TITLE_CSS).first.wait_for(
+            state="visible", timeout=15_000
+        )
+    except PWTimeoutError:
+        pass
+    time.sleep(0.8)
+    if not _on_card_grid(page):
+        raise AutomationError(
+            "Qualtrics card grid did not render after leaving /dashboard. "
+            f"URL: {page.url}. Cards seen: {_visible_card_titles(page)}."
+        )
+
+
+def _ensure_card_grid(page: Page) -> None:
+    """Make sure the five Qualtrics dashboard cards are on screen."""
+    if _inside_dashboard(page):
+        if _go_back_to_card_grid(page):
+            return
+        log.info(
+            "Go Back did not return to the card grid (url=%s). "
+            "Re-opening it from /dashboard.",
+            page.url,
+        )
+    if _on_card_grid(page):
+        return
+    _open_card_grid_from_dashboard(page)
+
+
+def _click_dashboard_card(
+    page: Page, labels: Iterable[str], timeout_ms: int = 12_000
+) -> bool:
+    """Click the category card whose title matches one of ``labels``."""
+    wanted = {_normalize_label(label) for label in labels}
+    titles = page.locator(sel.DASHBOARD_CARD_TITLE_CSS)
+    try:
+        titles.first.wait_for(state="visible", timeout=timeout_ms)
+    except PWTimeoutError:
+        titles = None
+
+    if titles is not None:
+        page.wait_for_timeout(300)
+        count = titles.count()
+        for i in range(count):
+            title = titles.nth(i)
+            try:
+                text = _normalize_label(title.inner_text(timeout=2_000))
+            except Exception:  # noqa: BLE001
+                continue
+            if text not in wanted:
+                continue
+            card = title.locator("xpath=ancestor::app-dashboard-card[1]")
+            target = card if card.count() else title
+            try:
+                target.scroll_into_view_if_needed(timeout=3_000)
+            except PWTimeoutError:
+                pass
+            target.click(timeout=5_000)
+            log.info("Clicked dashboard card '%s'.", text)
+            return True
+
+    for label in labels:
+        if _click_card(page, label, f"'{label}' card", timeout_ms=2_500):
+            return True
+    return False
+
+
+def _dashboard_ready_for_capture(
+    page: Page, labels: Iterable[str], view_id: str | None
+) -> bool:
+    """True when this dashboard actually rendered, not a blank shell."""
+    if _page_seems_blank(page):
+        return False
+    if view_id and f"/view/{view_id}" not in (page.url or ""):
+        log.warning(
+            "Expected /view/%s but the URL is %s.", view_id, page.url
+        )
+        return False
+    try:
+        title_el = page.locator(sel.DASHBOARD_TITLE_CSS).first
+        title_el.wait_for(state="visible", timeout=8_000)
+        title = _normalize_label(title_el.inner_text())
+    except Exception:  # noqa: BLE001
+        log.warning("Dashboard title did not appear (url=%s).", page.url)
+        return False
+    if not title:
+        return False
+    normalized_labels = [_normalize_label(label) for label in labels]
+    if normalized_labels and not any(
+        label in title or title in label for label in normalized_labels
+    ):
+        log.warning(
+            "Dashboard title '%s' does not match %s.", title, list(labels)
+        )
+        return False
+    return True
 
 
 def _click_card(
@@ -396,6 +623,7 @@ def _click_card(
         f".category-card:has-text({label!r})",
         f"[data-cy='category-card']:has-text({label!r})",
         f".category-card-wrapper:has-text({label!r})",
+        f"app-dashboard-card:has-text({label!r})",
     )
     for sel_str in selectors:
         try:
@@ -415,165 +643,73 @@ def _click_card(
     return False
 
 
-def _open_dashboard_via_tile(page: Page, canonical: str, tile_labels) -> None:
-    """Land on /dashboard, click Qualtrics -> click the dashboard tile.
+def open_dashboard(page: Page, dashboard: dict) -> None:
+    """Open a dashboard by clicking its card on the Qualtrics category page.
 
-    Used for AIQ 4.1.4 routes whose lazy JS chunk is served with the wrong
-    MIME type on direct navigation (e.g. /view/1896, /categories/356). By
-    entering through /dashboard (always renders correctly) and using in-SPA
-    tile clicks, Angular's router reuses already-loaded modules and never
-    re-fetches the broken chunk.
+    Direct ``page.goto`` of ``/categories/356/view/<id>`` renders a blank
+    shell after the AIQ 4.1.6 release (the lazy route chunk is served as
+    HTML). Clicking the card stays inside the Angular app, which is the
+    same path that still renders Spend Overview and Trips Statistics.
+    Between dashboards we click the angle-left Go Back button so the next
+    card is chosen from the grid.
     """
-    log.info(
-        "Opening dashboard '%s' via SPA bootstrap: /dashboard -> Qualtrics tile -> tile.",
-        canonical,
-    )
-    page.goto("https://aiq.cerebriai.com/dashboard",
-              wait_until="domcontentloaded")
-    try:
-        page.wait_for_load_state("networkidle", timeout=15_000)
-    except PWTimeoutError:
-        pass
-    time.sleep(2.0)
+    canonical = dashboard["name"]
+    labels: list[str] = list(dashboard["ui_labels"])
+    view_id = _view_id_from_url(dashboard.get("url"))
+    last_error: AutomationError | None = None
 
-    # If /dashboard already redirected us into /categories/356 (some user
-    # roles land there by default), skip the Qualtrics-tile click.
-    if "/categories/356" not in page.url:
-        if not _click_card(page, "Qualtrics", "Qualtrics category card",
-                           timeout_ms=15_000):
+    for attempt in (1, 2):
+        log.info(
+            "Opening dashboard '%s' by clicking its card (attempt %d).",
+            canonical, attempt,
+        )
+        try:
+            _ensure_card_grid(page)
+            _ensure_company_tab(page)
+            if not _click_dashboard_card(page, labels):
+                seen = _visible_card_titles(page)
+                raise AutomationError(
+                    f"Could not find a card for '{canonical}' "
+                    f"(labels {labels}). Cards on screen: {seen or '(none)'}. "
+                    f"URL: {page.url}."
+                )
+            if view_id:
+                try:
+                    page.wait_for_url(f"**/view/{view_id}**", timeout=20_000)
+                except PWTimeoutError:
+                    log.warning(
+                        "URL did not become /view/%s (now %s).",
+                        view_id, page.url,
+                    )
+            _wait_for_dashboard_ready(page)
+            if _dashboard_ready_for_capture(page, labels, view_id):
+                log.info(
+                    "Dashboard '%s' is open at %s.", canonical, page.url
+                )
+                return
             raise AutomationError(
-                f"Could not click the Qualtrics category card on /dashboard "
-                f"to reach /categories/356 (needed to open '{canonical}')."
+                f"Dashboard '{canonical}' did not render "
+                f"(url={page.url})."
             )
-        try:
-            page.wait_for_url("**/categories/356", timeout=15_000)
-        except PWTimeoutError:
-            pass
-        try:
-            page.wait_for_load_state("networkidle", timeout=15_000)
-        except PWTimeoutError:
-            pass
-        time.sleep(2.0)
+        except AutomationError as exc:
+            last_error = exc
+            log.warning("%s", exc)
+            if attempt == 1:
+                try:
+                    _open_card_grid_from_dashboard(page)
+                except AutomationError as grid_exc:
+                    last_error = grid_exc
+                    log.warning("%s", grid_exc)
 
-    # Now click the target dashboard tile.
-    for label in tile_labels:
-        if _click_card(page, label, f"'{canonical}' tile", timeout_ms=10_000):
-            _wait_for_dashboard_ready(page)
-            return
-
-    # Last-ditch: raw text click (in case AIQ changes tile CSS).
-    for label in tile_labels:
-        try:
-            loc = page.get_by_text(label, exact=False).first
-            loc.wait_for(state="visible", timeout=5_000)
-            loc.scroll_into_view_if_needed(timeout=3_000)
-            loc.click(timeout=5_000)
-            _wait_for_dashboard_ready(page)
-            return
-        except (PWTimeoutError, Exception):  # noqa: BLE001
-            continue
-
-    # Save a diagnostic screenshot to help the operator inspect the DOM.
     err_dir = Path("output/test/errors")
     err_dir.mkdir(parents=True, exist_ok=True)
-    diag = err_dir / f"tile_click_failed_{canonical.replace(' ', '_')}.png"
+    diag = err_dir / f"open_failed_{canonical.replace(' ', '_')}.png"
     try:
-        page.screenshot(path=str(diag), full_page=True)
+        page.screenshot(path=str(diag), full_page=False)
     except Exception:  # noqa: BLE001
         pass
     raise AutomationError(
-        f"Could not find/click the '{canonical}' tile after landing on "
-        f"/categories/356. URL at time of failure: {page.url}. "
-        f"Tried labels: {list(tile_labels)}. Diagnostic screenshot: {diag}."
-    )
-
-
-def open_dashboard(page: Page, dashboard: dict) -> None:
-    """Open a dashboard, preferring its direct URL if configured."""
-    canonical = dashboard["name"]
-    labels: list[str] = dashboard["ui_labels"]
-    direct_url = dashboard.get("url")
-
-    # Route around the AIQ 4.1.4 lazy-chunk MIME bug for known-broken URLs
-    # by using an in-SPA tile click instead of a direct page.goto().
-    if _url_needs_spa_bootstrap(direct_url):
-        _open_dashboard_via_tile(
-            page, canonical, _TRIP_STATS_TILE_LABELS if "1896" in direct_url
-            else tuple(labels)
-        )
-        return
-
-    if direct_url:
-        # Occasionally AIQ returns an empty shell for a dashboard (blank
-        # background, no chrome, no widgets) — a transient backend issue.
-        # Retry the navigation once if we detect that state.
-        for attempt in (1, 2):
-            log.info(
-                "Opening dashboard '%s' via direct URL (attempt %d): %s",
-                canonical, attempt, direct_url,
-            )
-            page.goto(direct_url, wait_until="domcontentloaded")
-            _wait_for_dashboard_ready(page)
-            if not _page_seems_blank(page):
-                return
-            log.warning(
-                "Dashboard '%s' rendered as a blank page (no AIQ chrome). %s",
-                canonical,
-                "Retrying once..." if attempt == 1 else "Giving up; continuing.",
-            )
-            if attempt == 1:
-                time.sleep(2)
-        return
-
-    log.info("Opening dashboard: %s (labels tried: %s)", canonical, labels)
-
-    css_fallback = sel.DASHBOARD_CSS_FALLBACKS.get(canonical)
-    if css_fallback:
-        loc = page.locator(css_fallback).first
-        try:
-            loc.wait_for(state="visible", timeout=2_000)
-            loc.click()
-            _wait_for_dashboard_ready(page)
-            return
-        except PWTimeoutError:
-            pass
-
-    for label in labels:
-        for role in sel.DASHBOARD_ROLE_CANDIDATES:
-            loc = page.get_by_role(role, name=label, exact=False).first
-            try:
-                loc.wait_for(state="visible", timeout=1_500)
-                loc.click()
-                _wait_for_dashboard_ready(page)
-                log.info("Dashboard '%s' opened via role=%s, label='%s'.",
-                         canonical, role, label)
-                return
-            except PWTimeoutError:
-                continue
-            except Exception:  # noqa: BLE001
-                continue
-
-        # Last-ditch: raw text match
-        loc = page.get_by_text(label, exact=False).first
-        try:
-            loc.wait_for(state="visible", timeout=1_500)
-            loc.click()
-            _wait_for_dashboard_ready(page)
-            log.info("Dashboard '%s' opened via text match '%s'.",
-                     canonical, label)
-            return
-        except PWTimeoutError:
-            continue
-
-    raise AutomationError(
-        f"Could not find dashboard '{canonical}' with any of the labels "
-        f"{labels}.\n"
-        "Fix in Chrome DevTools:\n"
-        "  1. Right-click the dashboard tile/link and choose Inspect.\n"
-        "  2. Note its exact visible text and, if it has one, its role.\n"
-        "  3. Update config.DASHBOARDS ui_labels if the visible text differs.\n"
-        "  4. Or paste a unique CSS selector into "
-        "selectors.DASHBOARD_CSS_FALLBACKS keyed by the canonical name."
+        f"{last_error} Diagnostic screenshot: {diag}."
     )
 
 

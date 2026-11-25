@@ -6,11 +6,12 @@ Flow (per invocation):
     1. Launch/reuse Microsoft Edge via a persistent profile.
     2. Navigate to AIQ; detect auth and pause for manual login if needed.
     3. Ensure the top-nav "Select Organization" dropdown is set to Qualtrics.
-    4. Capture all 6 dashboards for the current logged-in user (unless
-       --skip-current is passed).
+    4. Capture all dashboards in config.DASHBOARDS for the current
+       logged-in user (unless --skip-current is passed). Each dashboard
+       is opened by clicking its card on the Qualtrics category page.
     5. For each user in config.IMPERSONATED_USERS (or the user passed via
        --user), press Ctrl+Shift+A → type name → click match, verify the
-       organization is still Qualtrics, then capture all 6 dashboards.
+       organization is still Qualtrics, then capture the same dashboards.
     6. Print a summary grouped by user.
 
 Failures in one dashboard don't abort the run; failures in one user
